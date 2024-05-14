@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"net/http/cookiejar"
 	"os"
 	"path/filepath"
 	"sync"
@@ -30,7 +32,8 @@ type truncater interface {
 type Client struct {
 	// HTTPClient specifies the http.Client which will be used for communicating
 	// with the remote server during the file transfer.
-	HTTPClient HTTPClient
+	// HTTPClient HTTPClient
+	HTTPClient *http.Client
 
 	// UserAgent specifies the User-Agent string which will be set in the
 	// headers of all requests made by this client.
@@ -44,16 +47,23 @@ type Client struct {
 	// to the transfer progress statistics. The BufferSize of each request can
 	// be overridden on each Request object. Default: 32KB.
 	BufferSize int
+
+	Cookies []*http.Cookie
 }
 
 // NewClient returns a new file download Client, using default configuration.
 func NewClient() *Client {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		log.Fatalf("Got error while creating cookie jar %s", err.Error())
+	}
 	return &Client{
 		UserAgent: "grab",
 		HTTPClient: &http.Client{
 			Transport: &http.Transport{
 				Proxy: http.ProxyFromEnvironment,
 			},
+			Jar: jar,
 		},
 	}
 }
@@ -316,10 +326,19 @@ func (c *Client) checksumFile(resp *Response) stateFunc {
 	return c.closeResponse
 }
 
+func (c *Client) SetCookies(cookies []*http.Cookie) {
+	if len(cookies) > 0 {
+		c.Cookies = cookies
+	}
+}
+
 // doHTTPRequest sends a HTTP Request and returns the response
 func (c *Client) doHTTPRequest(req *http.Request) (*http.Response, error) {
 	if c.UserAgent != "" && req.Header.Get("User-Agent") == "" {
 		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	if len(c.Cookies) > 0 {
+		c.HTTPClient.Jar.SetCookies(req.URL, c.Cookies)
 	}
 	return c.HTTPClient.Do(req)
 }
